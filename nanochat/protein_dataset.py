@@ -68,15 +68,19 @@ def protein_sequences_iter(split="train", start=0, step=1, max_length=None):
     """
     files = list_protein_files(split)
     
+    # Use cache directory inside nanochat project
+    cache_dir = os.path.join(get_base_dir(), "protein_hf_cache")
+    os.makedirs(cache_dir, exist_ok=True)
+    
     for file_idx in range(start, len(files), step):
         remote_path = files[file_idx]
         
-        # Download file if not cached
+        # Download file if not cached (to nanochat directory)
         local_path = hf_hub_download(
             repo_id=REPO_ID,
             filename=remote_path,
             repo_type="dataset",
-            cache_dir=None  # Uses default HF cache
+            cache_dir=cache_dir
         )
         
         # Read and decompress

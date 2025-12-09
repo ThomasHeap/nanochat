@@ -111,6 +111,7 @@ def protein_sequences_iter_batched_with_index(split, start=0, step=1, batch_size
     Helper that yields (batch, file_idx) tuples.
     """
     from nanochat.protein_dataset import list_protein_files
+    from nanochat.common import get_base_dir
     from huggingface_hub import hf_hub_download
     import zstandard as zstd
     import json
@@ -119,15 +120,19 @@ def protein_sequences_iter_batched_with_index(split, start=0, step=1, batch_size
     
     files = list_protein_files(split)
     
+    # Use cache directory inside nanochat project
+    cache_dir = os.path.join(get_base_dir(), "protein_hf_cache")
+    os.makedirs(cache_dir, exist_ok=True)
+    
     for file_idx in range(start, len(files), step):
         remote_path = files[file_idx]
         
-        # Check if file is already cached
-        cache_path = os.path.expanduser(f"~/.cache/huggingface/hub/datasets--DeepFoldProtein--uniref50_processed/snapshots")
+        # Check if file is already cached in our nanochat directory
+        repo_cache_path = os.path.join(cache_dir, "datasets--DeepFoldProtein--uniref50_processed", "snapshots")
         is_cached = False
-        if os.path.exists(cache_path):
-            for snapshot_dir in os.listdir(cache_path):
-                potential_path = os.path.join(cache_path, snapshot_dir, remote_path)
+        if os.path.exists(repo_cache_path):
+            for snapshot_dir in os.listdir(repo_cache_path):
+                potential_path = os.path.join(repo_cache_path, snapshot_dir, remote_path)
                 if os.path.exists(potential_path):
                     is_cached = True
                     break
@@ -135,12 +140,12 @@ def protein_sequences_iter_batched_with_index(split, start=0, step=1, batch_size
         if not is_cached:
             print(f"[Protein Dataloader] Downloading {remote_path}...")
         
-        # Download file if not cached
+        # Download file if not cached (to nanochat directory)
         local_path = hf_hub_download(
             repo_id=REPO_ID,
             filename=remote_path,
             repo_type="dataset",
-            cache_dir=None
+            cache_dir=cache_dir
         )
         
         if not is_cached:

@@ -26,7 +26,11 @@ import pyarrow.parquet as pq
 
 # Configuration
 REPO_ID = "DeepFoldProtein/uniref50_processed"
-OUTPUT_BASE_DIR = os.path.expanduser("~/.cache/nanochat/protein_data")
+# Store data inside nanochat project directory
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from nanochat.common import get_base_dir
+OUTPUT_BASE_DIR = os.path.join(get_base_dir(), "protein_data")
 
 def download_and_process_files(split, num_files=-1, max_seq_length=None):
     """
