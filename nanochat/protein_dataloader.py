@@ -44,7 +44,7 @@ def protein_dataloader_with_state(B, T, split, batch_size=128, max_seq_length=20
     
     # Get tokenizer
     tokenizer = get_tokenizer()
-    bos_token_id = tokenizer.char_to_id.get('<cls>', 0)  # Use <cls> as BOS for proteins
+    bos_token_id = tokenizer.aa_to_id.get('<cls>', 0)  # Use <cls> as BOS for proteins
     
     # Resume state
     resume_file_idx = resume_state_dict.get("file_idx", 0) if resume_state_dict else 0
