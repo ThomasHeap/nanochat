@@ -14,8 +14,8 @@ from nanochat.common import get_base_dir
 # Dataset configuration
 
 REPO_ID = "DeepFoldProtein/uniref50_processed"
-base_dir = get_base_dir()
-PROTEIN_DATA_DIR = os.path.join(base_dir, "protein_data")
+# Use shared filesystem for k8s cluster
+PROTEIN_DATA_DIR = "/data-fsx/tomheap-sandbox/protein_data"
 os.makedirs(PROTEIN_DATA_DIR, exist_ok=True)
 
 # Cache for dataset file listings
@@ -68,8 +68,8 @@ def protein_sequences_iter(split="train", start=0, step=1, max_length=None):
     """
     files = list_protein_files(split)
     
-    # Use cache directory inside nanochat project
-    cache_dir = os.path.join(get_base_dir(), "protein_hf_cache")
+    # Use shared filesystem cache directory for k8s cluster
+    cache_dir = "/data-fsx/tomheap-sandbox/protein_hf_cache"
     os.makedirs(cache_dir, exist_ok=True)
     
     for file_idx in range(start, len(files), step):

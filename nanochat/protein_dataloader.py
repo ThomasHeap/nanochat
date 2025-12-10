@@ -126,8 +126,8 @@ def protein_sequences_iter_batched_with_index(split, start=0, step=1, batch_size
     
     files = list_protein_files(split)
     
-    # Use cache directory inside nanochat project
-    cache_dir = os.path.join(get_base_dir(), "protein_hf_cache")
+    # Use shared filesystem cache directory for k8s cluster
+    cache_dir = "/data-fsx/tomheap-sandbox/protein_hf_cache"
     os.makedirs(cache_dir, exist_ok=True)
     
     for file_idx in range(start, len(files), step):

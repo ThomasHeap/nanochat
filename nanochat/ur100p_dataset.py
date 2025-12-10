@@ -12,8 +12,8 @@ from nanochat.common import get_base_dir
 # Dataset configuration
 
 REPO_ID = "chandar-lab/UR100P"
-base_dir = get_base_dir()
-UR100P_DATA_DIR = os.path.join(base_dir, "ur100p_cache")
+# Use shared filesystem for k8s cluster
+UR100P_DATA_DIR = "/data-fsx/tomheap-sandbox/ur100p_cache"
 os.makedirs(UR100P_DATA_DIR, exist_ok=True)
 
 
