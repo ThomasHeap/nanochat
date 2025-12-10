@@ -135,7 +135,7 @@ class Block(nn.Module):
 
 
 class GPT(nn.Module):
-    def __init__(self, config, pad_vocab_size_to=64):
+    def __init__(self, config, pad_vocab_size_to=32):
         super().__init__()
         self.config = config
         # For DDP, we want vocab_size divisible by world_size. Also, there are potential performance benefits, see:

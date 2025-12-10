@@ -78,7 +78,7 @@ wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat-pr
 tokenizer = get_tokenizer()
 vocab_size = tokenizer.get_vocab_size()
 print0(f"Protein Tokenizer Vocab size: {vocab_size}")
-assert vocab_size == 25, f"Expected protein vocab size 25, got {vocab_size}"
+assert vocab_size == 64, f"Expected protein vocab size 25, got {vocab_size}"
 
 # Model configuration
 num_layers = depth
