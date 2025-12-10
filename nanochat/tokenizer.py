@@ -33,7 +33,7 @@ class ProteinTokenizer:
     
     def encode(self, sequence, prepend=None, append=None, num_threads=8):
         """Encode a protein sequence to token IDs, optionally with special tokens."""
-        ids = [self.aa_to_id.get(c, 2) for aa in sequence]  # 2 is <unk>
+        ids = [self.aa_to_id.get(aa, 2) for aa in sequence]  # 2 is <unk>
         
         if prepend is not None:
             prepend_id = prepend if isinstance(prepend, int) else self.encode_special(prepend)

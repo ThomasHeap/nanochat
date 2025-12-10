@@ -28,17 +28,19 @@ print_banner()
 
 # -----------------------------------------------------------------------------
 # User settings
-run = "protein_test" # wandb run name
+run = "protein_large" # wandb run name
 # Runtime
 device_type = "" # cuda|cpu|mps (empty => autodetect)
 # Model architecture
-depth = 12 # smaller model for protein testing
-max_seq_len = 1024 # max context length (proteins are shorter than text)
-# Training horizon
-num_iterations = 500 # number of training steps
+depth = 20 # smaller model for protein testing
+max_seq_len = 4096 # max context length (proteins are shorter than text)
+# Training horizon. Only one of these 3 will be used, in this order of precedence.
+num_iterations = -1 # explicit number of steps of the optimization (-1 = disable)
+target_flops = -1.0 # calculate num_iterations to reach target_flops. Useful for scaling laws experiments (-1 = disable)
+target_param_data_ratio = 20 # calculate num_iterations to maintain fixed data:param ratio (Chinchilla=20) (-1 = disable)
 # Optimization
-device_batch_size = 16 # per-device batch size
-total_batch_size = 65536 # total batch size in tokens
+device_batch_size = 32 # per-device batch size
+total_batch_size = 1048576 # total batch size in tokens
 embedding_lr = 0.2
 unembedding_lr = 0.004
 weight_decay = 0.0
@@ -49,7 +51,7 @@ warmdown_ratio = 0.2
 final_lr_frac = 0.1
 resume_from_step = -1
 # Evaluation
-eval_every = 50 # evaluate every N steps
+eval_every = 1000 # evaluate every N steps
 eval_tokens = 524288 # tokens for validation
 sample_every = 100 # sample every N steps
 save_every = -1 # save checkpoints every N steps (-1 = only at end)
@@ -123,10 +125,29 @@ orig_model = model
 model = torch.compile(model, dynamic=False)
 num_params = sum(p.numel() for p in model.parameters())
 print0(f"Parameters: {num_params:,}")
+num_flops_per_token = model.estimate_flops()
+print0(f"Estimated FLOPs per token: {num_flops_per_token:e}")
 
+# Calculate number of iterations. Either it is given, or from target flops, or from target data:param ratio (in that order)
+assert num_iterations > 0 or target_param_data_ratio > 0 or target_flops > 0
+if num_iterations > 0:
+    print0(f"Using user-provided number of iterations: {num_iterations:,}")
+elif target_flops > 0:
+    # calculate the number of iterations from the target flops
+    num_iterations = round(target_flops / (num_flops_per_token * total_batch_size))
+    print0(f"Calculated number of iterations from target FLOPs: {num_iterations:,}")
+elif target_param_data_ratio > 0:
+    # calculate the number of iterations from the target param data ratio
+    target_tokens = target_param_data_ratio * num_params
+    num_iterations = target_tokens // total_batch_size
+    print0(f"Calculated number of iterations from target data:param ratio: {num_iterations:,}")
+else:
+    raise ValueError("No training horizon specified")
+    
 total_tokens = total_batch_size * num_iterations
-print0(f"Training tokens: {total_tokens:,}")
-print0(f"Tokens:Params ratio: {total_tokens / num_params:.2f}")
+print0(f"Total number of training tokens: {total_tokens:,}")
+print0(f"Tokens : Params ratio: {total_batch_size * num_iterations / num_params:.2f}") # Chinchilla is ~20
+print0(f"Total training FLOPs estimate: {num_flops_per_token * total_tokens:e}")
 
 # Initialize Optimizer
 optimizers = model.setup_optimizers(
