@@ -52,7 +52,7 @@ final_lr_frac = 0.1
 resume_from_step = -1
 # Evaluation
 eval_every = 1000 # evaluate every N steps
-eval_tokens = 524288 # tokens for validation
+eval_tokens = 20*1048576 # tokens for validation (same as base_train.py)
 sample_every = 100 # sample every N steps
 save_every = -1 # save checkpoints every N steps (-1 = only at end)
 # Output
