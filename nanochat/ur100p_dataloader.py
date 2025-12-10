@@ -11,24 +11,26 @@ from nanochat.ur100p_dataset import ur100p_sequences_packed_iter
 from nanochat.tokenizer import get_tokenizer
 
 
-def ur100p_dataloader_with_state(B, T, split, max_seq_length=1024, device="cuda", resume_state_dict=None):
+def ur100p_dataloader_with_state(B, T, split, max_seq_length=1024, device="cuda", resume_state_dict=None, val_split_ratio=0.5):
     """
     Stream protein sequences from UR100P dataset, pack with <bos>/<eos>, and yield training batches.
     
     This implementation uses proper text-style packing and supports epoch tracking.
+    Since UR100P only has train/test splits, we automatically split the test set into validation/test.
     
     Args:
         B: Batch size
         T: Sequence length (context length)
-        split: Either "train" or "validation"
+        split: One of "train", "validation", or "test"
         max_seq_length: Maximum length for packed sequences
         device: Device to place tensors on
         resume_state_dict: Optional state dict for resuming training
+        val_split_ratio: Fraction of original test set to use as validation (default 0.5)
     
     Yields:
         (inputs, targets, state_dict) tuples
     """
-    assert split in ["train", "validation"], "split must be 'train' or 'validation'"
+    assert split in ["train", "validation", "test"], "split must be 'train', 'validation', or 'test'"
     
     # Get DDP info for distributed training
     ddp, ddp_rank, ddp_local_rank, ddp_world_size = get_dist_info()
@@ -62,7 +64,8 @@ def ur100p_dataloader_with_state(B, T, split, max_seq_length=1024, device="cuda"
                 split=split,
                 start=start_idx, 
                 step=ddp_world_size,
-                max_length=max_seq_length
+                max_length=max_seq_length,
+                val_split_ratio=val_split_ratio
             ):
                 yield doc, doc_idx, False  # False = not epoch complete
                 doc_idx += ddp_world_size
