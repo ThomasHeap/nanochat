@@ -21,7 +21,11 @@ SPECIAL_TOKENS = [
 class ProteinTokenizer:
     def __init__(self):
         vocab = SPECIAL_TOKENS + list(AMINO_ACIDS)
-        self.vocab_size = len(vocab)
+        # Pad vocab to 64 for distributed training compatibility
+        while len(vocab) < 64:
+            vocab.append(f"<pad_{len(vocab)}>")
+        
+        self.vocab_size = len(vocab)  # Now 64
         self.aa_to_id = {aa:i for i,aa in enumerate(vocab)}
         self.id_to_aa = {i:aa for i,aa in enumerate(vocab)}
 

@@ -28,19 +28,19 @@ print_banner()
 
 # -----------------------------------------------------------------------------
 # User settings
-run = "protein_large" # wandb run name
+run = "protein_test" # wandb run name
 # Runtime
 device_type = "" # cuda|cpu|mps (empty => autodetect)
 # Model architecture
-depth = 20 # smaller model for protein testing
-max_seq_len = 4096 # max context length (proteins are shorter than text)
+depth = 12 # smaller model for protein testing
+max_seq_len = 1024 # max context length (proteins are shorter than text)
 # Training horizon. Only one of these 3 will be used, in this order of precedence.
 num_iterations = -1 # explicit number of steps of the optimization (-1 = disable)
 target_flops = -1.0 # calculate num_iterations to reach target_flops. Useful for scaling laws experiments (-1 = disable)
 target_param_data_ratio = 20 # calculate num_iterations to maintain fixed data:param ratio (Chinchilla=20) (-1 = disable)
 # Optimization
-device_batch_size = 32 # per-device batch size
-total_batch_size = 1048576 # total batch size in tokens
+device_batch_size = 16 # per-device batch size
+total_batch_size = 131072 # total batch size in tokens (8 * 16 * 1024 = natural batch size for 8 GPUs)
 embedding_lr = 0.2
 unembedding_lr = 0.004
 weight_decay = 0.0
@@ -51,8 +51,8 @@ warmdown_ratio = 0.2
 final_lr_frac = 0.1
 resume_from_step = -1
 # Evaluation
-eval_every = 1000 # evaluate every N steps
-eval_tokens = 20*1048576 # tokens for validation (same as base_train.py)
+eval_every = 250 # evaluate every N steps (more frequent)
+eval_tokens = 20*131072 # tokens for validation (proportional to total_batch_size)
 sample_every = 100 # sample every N steps
 save_every = -1 # save checkpoints every N steps (-1 = only at end)
 # Output
