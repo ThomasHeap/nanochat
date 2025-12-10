@@ -5,6 +5,12 @@ This module handles the chandar-lab/UR100P dataset format with proper text-style
 
 import os
 import json
+
+# Set HuggingFace cache directories BEFORE importing datasets
+os.environ["HF_HOME"] = "/data-fsx/tomheap-sandbox/huggingface_cache"
+os.environ["HF_DATASETS_CACHE"] = "/data-fsx/tomheap-sandbox/huggingface_cache/datasets"
+os.environ["HUGGINGFACE_HUB_CACHE"] = "/data-fsx/tomheap-sandbox/huggingface_cache/hub"
+
 from datasets import load_dataset
 from nanochat.common import get_base_dir
 
@@ -15,6 +21,10 @@ REPO_ID = "chandar-lab/UR100P"
 # Use shared filesystem for k8s cluster
 UR100P_DATA_DIR = "/data-fsx/tomheap-sandbox/ur100p_cache"
 os.makedirs(UR100P_DATA_DIR, exist_ok=True)
+
+# Ensure HuggingFace cache directories exist
+for cache_dir in [os.environ["HF_HOME"], os.environ["HF_DATASETS_CACHE"], os.environ["HUGGINGFACE_HUB_CACHE"]]:
+    os.makedirs(cache_dir, exist_ok=True)
 
 
 def load_ur100p_dataset(split="train", streaming=False):

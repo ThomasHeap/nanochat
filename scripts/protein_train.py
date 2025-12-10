@@ -12,6 +12,12 @@ torchrun --nproc_per_node=8 protein_train.py
 
 import os
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
+# Set HuggingFace cache directories for k8s cluster BEFORE any HF imports
+os.environ["HF_HOME"] = "/data-fsx/tomheap-sandbox/huggingface_cache"
+os.environ["HF_DATASETS_CACHE"] = "/data-fsx/tomheap-sandbox/huggingface_cache/datasets"
+os.environ["HUGGINGFACE_HUB_CACHE"] = "/data-fsx/tomheap-sandbox/huggingface_cache/hub"
+
 import time
 from contextlib import nullcontext
 
