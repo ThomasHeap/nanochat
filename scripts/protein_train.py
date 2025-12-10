@@ -19,7 +19,7 @@ import wandb
 import torch
 
 from nanochat.gpt import GPT, GPTConfig
-from nanochat.protein_dataloader import protein_dataloader_with_state  # Use protein dataloader
+from nanochat.ur100p_dataloader import ur100p_dataloader_with_state  # Use UR100P dataloader
 from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, print_banner, get_base_dir, autodetect_device_type
 from nanochat.tokenizer import get_tokenizer
 from nanochat.checkpoint_manager import save_checkpoint, load_checkpoint
@@ -28,7 +28,7 @@ print_banner()
 
 # -----------------------------------------------------------------------------
 # User settings
-run = "protein_test" # wandb run name
+run = "protein_UR100P" # wandb run name
 # Runtime
 device_type = "" # cuda|cpu|mps (empty => autodetect)
 # Model architecture
@@ -40,7 +40,7 @@ target_flops = -1.0 # calculate num_iterations to reach target_flops. Useful for
 target_param_data_ratio = 20 # calculate num_iterations to maintain fixed data:param ratio (Chinchilla=20) (-1 = disable)
 # Optimization
 device_batch_size = 32 # per-device batch size
-total_batch_size = 131072 * 2 # total batch size in tokens (8 * 16 * 1024 = natural batch size for 8 GPUs)
+total_batch_size = 131072 * 2 # total batch size in tokens (8 * 32 * 1024 = natural batch size for 8 GPUs)
 embedding_lr = 0.2
 unembedding_lr = 0.004
 weight_decay = 0.0
@@ -164,25 +164,23 @@ if resuming:
     del optimizer_data
 
 # Initialize Protein DataLoaders
-print0("Initializing protein dataloaders...")
+print0("Initializing UR100P protein dataloaders...")
 dataloader_resume_state_dict = None if not resuming else meta_data["dataloader_state_dict"]
-train_loader = protein_dataloader_with_state(
+train_loader = ur100p_dataloader_with_state(
     device_batch_size,
     max_seq_len,
-    split="train",  # or "valid" for smaller test
-    batch_size=128,
+    split="train",
     max_seq_length=2048,
     device=device,
     resume_state_dict=dataloader_resume_state_dict
 )
 # Validation loader
 def build_val_loader():
-    from nanochat.protein_dataloader import protein_dataloader
-    return protein_dataloader(
+    from nanochat.ur100p_dataloader import ur100p_dataloader
+    return ur100p_dataloader(
         device_batch_size,
         max_seq_len,
-        split="valid",
-        batch_size=128,
+        split="validation",
         max_seq_length=2048,
         device=device
     )
@@ -213,12 +211,14 @@ if not resuming:
     min_val_loss = float("inf")
     smooth_train_loss = 0
     total_training_time = 0
+    total_tokens_ingested = 0  # Track total tokens consumed during training
 else:
     step = meta_data["step"]
     loop_state = meta_data["loop_state"]
     min_val_loss = loop_state["min_val_loss"]
     smooth_train_loss = loop_state["smooth_train_loss"]
     total_training_time = loop_state["total_training_time"]
+    total_tokens_ingested = loop_state.get("total_tokens_ingested", 0)  # Resume token counter
 
 # Training loop
 print0("\nStarting training loop...")
@@ -243,7 +243,7 @@ while True:
         wandb_run.log({"step": step, "val/loss": val_loss})
         model.train()
 
-    # Sampling - simple protein sequence generation
+    # Sampling - protein sequence generation with proper <bos>/<eos> tokens
     if master_process and (last_step or (step > 0 and step % sample_every == 0)):
         model.eval()
         prompts = [
@@ -251,12 +251,13 @@ while True:
             "MKTIIALSYIFCLVFA",  # Short sequence
         ]
         for prompt in prompts:
-            # Encode prompt with BOS token
-            tokens = [tokenizer.aa_to_id['<cls>']] + tokenizer.encode(prompt)
+            # Encode prompt with proper <bos> token (not <cls>)
+            tokens = [tokenizer.get_bos_token_id()] + tokenizer.encode(prompt)
             x_gen = torch.tensor([tokens], dtype=torch.long, device=device)
             
             # Simple greedy generation
             max_new_tokens = 30
+            eos_token_id = tokenizer.get_eos_token_id()
             with torch.no_grad(), autocast_ctx:
                 for _ in range(max_new_tokens):
                     # Forward pass (use only last max_seq_len tokens if sequence is too long)
@@ -266,6 +267,9 @@ while True:
                     next_token = logits[:, -1, :].argmax(dim=-1, keepdim=True)
                     # Append to sequence
                     x_gen = torch.cat([x_gen, next_token], dim=1)
+                    # Stop if we generate <eos>
+                    if next_token.item() == eos_token_id:
+                        break
             
             generated = tokenizer.decode(x_gen[0].tolist())
             print0(f"Input: {prompt[:30]}... → Generated: {generated[:80]}...")
@@ -289,6 +293,7 @@ while True:
                     "min_val_loss": min_val_loss,
                     "smooth_train_loss": smooth_train_loss,
                     "total_training_time": total_training_time,
+                    "total_tokens_ingested": total_tokens_ingested,
                 },
             },
             rank=ddp_rank,
@@ -307,6 +312,9 @@ while True:
         loss = loss / grad_accum_steps
         loss.backward()
         x, y, dataloader_state_dict = next(train_loader)
+    
+    # Update total tokens ingested counter
+    total_tokens_ingested += total_batch_size
     
     # Gradient clipping
     if grad_clip > 0.0:
@@ -336,7 +344,11 @@ while True:
         total_training_time += dt
     
     tok_per_sec = int(total_batch_size / dt)
-    print0(f"step {step:05d}/{num_iterations:05d} | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt*1000:.2f}ms | tok/sec: {tok_per_sec:,}")
+    # Calculate progress metrics
+    progress_pct = 100.0 * total_tokens_ingested / total_tokens
+    tokens_remaining = total_tokens - total_tokens_ingested
+    
+    print0(f"step {step:05d}/{num_iterations:05d} | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt*1000:.2f}ms | tok/sec: {tok_per_sec:,} | tokens: {total_tokens_ingested:,}/{total_tokens:,} ({progress_pct:.1f}%)")
     
     if step % 10 == 0:
         wandb_run.log({
@@ -344,6 +356,10 @@ while True:
             "train/loss": debiased_smooth_loss,
             "train/lrm": lrm,
             "train/tok_per_sec": tok_per_sec,
+            "tokens/total_tokens_ingested": total_tokens_ingested,
+            "tokens/total_tokens_target": total_tokens,
+            "tokens/progress_percent": progress_pct,
+            "tokens/tokens_remaining": tokens_remaining,
         })
 
     step += 1

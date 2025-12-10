@@ -48,7 +48,13 @@ def protein_dataloader_with_state(B, T, split, batch_size=128, max_seq_length=20
     
     # Resume state
     resume_file_idx = resume_state_dict.get("file_idx", 0) if resume_state_dict else 0
+    resume_epoch = resume_state_dict.get("epoch", 0) if resume_state_dict else 0
+    resume_tokens_in_epoch = resume_state_dict.get("tokens_in_epoch", 0) if resume_state_dict else 0
     first_pass = True
+    
+    # Track epoch completion
+    current_epoch = resume_epoch
+    tokens_in_current_epoch = resume_tokens_in_epoch
     
     # Infinite iterator over protein sequence batches
     def sequence_batches():

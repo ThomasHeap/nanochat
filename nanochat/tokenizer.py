@@ -14,6 +14,8 @@ SPECIAL_TOKENS = [
     "<pad>",
     "<mask>",
     "<unk>",
+    "<bos>",
+    "<eos>",
     "<cls>",
     "<sep>"
 ]
@@ -60,7 +62,11 @@ class ProteinTokenizer:
     
     def get_bos_token_id(self):
         """Get the beginning-of-sequence token ID."""
-        return self.aa_to_id['<cls>']
+        return self.aa_to_id['<bos>']
+    
+    def get_eos_token_id(self):
+        """Get the end-of-sequence token ID."""
+        return self.aa_to_id['<eos>']
     
     def decode(self, ids):
         """Decode token IDs back to protein sequence."""
