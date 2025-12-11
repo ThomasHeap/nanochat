@@ -11,7 +11,7 @@ from nanochat.ur100p_dataset import ur100p_sequences_packed_iter
 from nanochat.tokenizer import get_tokenizer
 
 
-def ur100p_dataloader_with_state(B, T, split, max_seq_length=1024, device="cuda", resume_state_dict=None, val_split_ratio=0.5):
+def ur100p_dataloader_with_state(B, T, split, max_seq_length=1024, device="cuda", resume_state_dict=None, val_split_ratio=0.5, shuffle=True, seed=42):
     """
     Stream protein sequences from UR100P dataset, pack with <bos>/<eos>, and yield training batches.
     
@@ -26,6 +26,8 @@ def ur100p_dataloader_with_state(B, T, split, max_seq_length=1024, device="cuda"
         device: Device to place tensors on
         resume_state_dict: Optional state dict for resuming training
         val_split_ratio: Fraction of original test set to use as validation (default 0.5)
+        shuffle: Whether to shuffle the dataset (only works with non-streaming mode)
+        seed: Random seed for shuffling
     
     Yields:
         (inputs, targets, state_dict) tuples
@@ -65,7 +67,9 @@ def ur100p_dataloader_with_state(B, T, split, max_seq_length=1024, device="cuda"
                 start=start_idx, 
                 step=ddp_world_size,
                 max_length=max_seq_length,
-                val_split_ratio=val_split_ratio
+                val_split_ratio=val_split_ratio,
+                shuffle=shuffle,
+                seed=seed
             ):
                 yield doc, doc_idx, False  # False = not epoch complete
                 doc_idx += ddp_world_size

@@ -27,7 +27,7 @@ for cache_dir in [os.environ["HF_HOME"], os.environ["HF_DATASETS_CACHE"], os.env
     os.makedirs(cache_dir, exist_ok=True)
 
 
-def load_ur100p_dataset(split="train", streaming=False, val_split_ratio=0.5):
+def load_ur100p_dataset(split="train", streaming=False, val_split_ratio=0.5, shuffle=True, seed=42):
     """
     Load the UR100P dataset from HuggingFace.
     
@@ -37,6 +37,8 @@ def load_ur100p_dataset(split="train", streaming=False, val_split_ratio=0.5):
         split: One of "train", "validation", or "test"
         streaming: If True, use streaming mode to avoid downloading everything
         val_split_ratio: Fraction of original test set to use as validation (default 0.5)
+        shuffle: Whether to shuffle the dataset (only works with non-streaming mode)
+        seed: Random seed for shuffling (default 42 for reproducibility)
     
     Returns:
         Dataset object
@@ -89,6 +91,13 @@ def load_ur100p_dataset(split="train", streaming=False, val_split_ratio=0.5):
                 dataset = full_test.select(range(val_size, total_test_size))
                 print(f"Created test split: {len(dataset)} sequences from test set")
     
+    # Apply shuffling for non-streaming datasets
+    if not streaming and shuffle and hasattr(dataset, 'shuffle'):
+        print(f"Shuffling {split} dataset with seed {seed}")
+        dataset = dataset.shuffle(seed=seed)
+    elif shuffle and streaming:
+        print(f"Note: Shuffling not available for streaming datasets")
+    
     if not streaming and split != "validation" and split != "test":
         print(f"Loaded {len(dataset)} sequences from {split} split")
     elif streaming:
@@ -97,7 +106,7 @@ def load_ur100p_dataset(split="train", streaming=False, val_split_ratio=0.5):
     return dataset
 
 
-def ur100p_sequences_iter(split="train", start=0, step=1, val_split_ratio=0.5):
+def ur100p_sequences_iter(split="train", start=0, step=1, val_split_ratio=0.5, shuffle=True, seed=42):
     """
     Iterate through protein sequences from the UR100P dataset.
     
@@ -106,11 +115,13 @@ def ur100p_sequences_iter(split="train", start=0, step=1, val_split_ratio=0.5):
         start: Starting index (useful for DDP)
         step: Step size for iteration (useful for DDP)
         val_split_ratio: Fraction of original test set to use as validation
+        shuffle: Whether to shuffle the dataset (only works with non-streaming mode)
+        seed: Random seed for shuffling
     
     Yields:
         Protein sequence strings
     """
-    dataset = load_ur100p_dataset(split, streaming=True, val_split_ratio=val_split_ratio)
+    dataset = load_ur100p_dataset(split, streaming=True, val_split_ratio=val_split_ratio, shuffle=shuffle, seed=seed)
     
     # For streaming validation/test splits, we need to handle the partitioning ourselves
     if split in ["validation", "test"] and hasattr(dataset, '__iter__'):  # streaming dataset
@@ -193,7 +204,7 @@ def ur100p_sequences_iter(split="train", start=0, step=1, val_split_ratio=0.5):
                         yield clean_sequence
 
 
-def ur100p_sequences_packed_iter(split="train", start=0, step=1, max_length=1024, val_split_ratio=0.5):
+def ur100p_sequences_packed_iter(split="train", start=0, step=1, max_length=1024, val_split_ratio=0.5, shuffle=True, seed=42):
     """
     Iterate through protein sequences with text-style packing.
     Each yielded item is a "document" that can contain multiple sequences
@@ -205,6 +216,8 @@ def ur100p_sequences_packed_iter(split="train", start=0, step=1, max_length=1024
         step: Step size for iteration (useful for DDP)
         max_length: Maximum length for packed sequences
         val_split_ratio: Fraction of original test set to use as validation
+        shuffle: Whether to shuffle the dataset (only works with non-streaming mode)
+        seed: Random seed for shuffling
     
     Yields:
         Lists of protein sequences to be packed together
@@ -218,7 +231,7 @@ def ur100p_sequences_packed_iter(split="train", start=0, step=1, max_length=1024
     current_doc = []
     current_length = 0
     
-    for sequence in ur100p_sequences_iter(split, start, step, val_split_ratio):
+    for sequence in ur100p_sequences_iter(split, start, step, val_split_ratio, shuffle, seed):
         # Estimate token length: <bos> + sequence + <eos>
         seq_tokens = tokenizer.encode(sequence)
         seq_length = len(seq_tokens) + 2  # +2 for <bos> and <eos>
