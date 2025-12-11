@@ -38,14 +38,14 @@ run = "protein_UR100P_shuffled" # wandb run name
 # Runtime
 device_type = "" # cuda|cpu|mps (empty => autodetect)
 # Model architecture
-depth = 24 # smaller model for protein testing
+depth = 20 # smaller model for protein testing
 max_seq_len = 2048 # max context length (proteins are shorter than text)
 # Training horizon. Only one of these 3 will be used, in this order of precedence.
 num_iterations = -1 # explicit number of steps of the optimization (-1 = disable)
 target_flops = -1.0 # calculate num_iterations to reach target_flops. Useful for scaling laws experiments (-1 = disable)
 target_param_data_ratio = 20 # calculate num_iterations to maintain fixed data:param ratio (Chinchilla=20) (-1 = disable)
 # Optimization
-device_batch_size = 32 # per-device batch size
+device_batch_size = 16 # per-device batch size
 total_batch_size = 8*device_batch_size*max_seq_len # total batch size in tokens (8 * 32 * 1024 = natural batch size for 8 GPUs)
 embedding_lr = 0.2
 unembedding_lr = 0.004
@@ -58,7 +58,7 @@ final_lr_frac = 0.1
 resume_from_step = -1
 # Evaluation
 eval_every = 250 # evaluate every N steps (more frequent)
-eval_tokens = 20*total_batch_size * 2 # tokens for validation (proportional to total_batch_size)
+eval_tokens = 20*total_batch_size # tokens for validation (proportional to total_batch_size)
 sample_every = 100 # sample every N steps
 save_every = -1 # save checkpoints every N steps (-1 = only at end)
 # Dataset

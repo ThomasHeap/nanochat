@@ -121,7 +121,10 @@ def ur100p_sequences_iter(split="train", start=0, step=1, val_split_ratio=0.5, s
     Yields:
         Protein sequence strings
     """
-    dataset = load_ur100p_dataset(split, streaming=True, val_split_ratio=val_split_ratio, shuffle=shuffle, seed=seed)
+    # Use non-streaming mode when shuffling is enabled (since shuffle requires full dataset)
+    # Use streaming mode when shuffle is disabled (for memory efficiency)
+    use_streaming = not shuffle
+    dataset = load_ur100p_dataset(split, streaming=use_streaming, val_split_ratio=val_split_ratio, shuffle=shuffle, seed=seed)
     
     # For streaming validation/test splits, we need to handle the partitioning ourselves
     if split in ["validation", "test"] and hasattr(dataset, '__iter__'):  # streaming dataset
