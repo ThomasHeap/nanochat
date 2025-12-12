@@ -160,7 +160,7 @@ def ur100p_sequences_iter(split="train", start=0, step=1, val_split_ratio=0.5, s
                 # Yield clean protein sequence
                 if sequence and len(sequence) > 0:
                     # Remove any whitespace and ensure only valid amino acids
-                    clean_sequence = ''.join(c for c in sequence.upper() if c.isalpha())
+                    clean_sequence = ''.join(c for c in sequence.upper())
                     if len(clean_sequence) > 0:
                         yield clean_sequence
             
