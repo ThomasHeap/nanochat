@@ -16,8 +16,11 @@ def run_command(cmd):
     """Run a shell command and return output, or None if it fails."""
     try:
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=5)
-        if result.returncode == 0:
+        # Return stdout if we got output (even if some files in xargs failed)
+        if result.stdout.strip():
             return result.stdout.strip()
+        if result.returncode == 0:
+            return ""
         return None
     except:
         return None
@@ -160,12 +163,23 @@ Generated: {timestamp}
 
 """
 
-    # bloat metrics: package all of the source code and assess its weight
-    packaged = run_command('files-to-prompt . -e py -e md -e rs -e html -e toml -e sh --ignore "*target*" --cxml')
-    num_chars = len(packaged)
-    num_lines = len(packaged.split('\n'))
-    num_files = len([x for x in packaged.split('\n') if x.startswith('<source>')])
-    num_tokens = num_chars // 4 # assume approximately 4 chars per token
+    # bloat metrics: count lines/chars in git-tracked source files only
+    extensions = ['py', 'md', 'rs', 'html', 'toml', 'sh']
+    git_patterns = ' '.join(f"'*.{ext}'" for ext in extensions)
+    files_output = run_command(f"git ls-files -- {git_patterns}")
+    file_list = [f for f in (files_output or '').split('\n') if f]
+    num_files = len(file_list)
+    num_lines = 0
+    num_chars = 0
+    if num_files > 0:
+        wc_output = run_command(f"git ls-files -- {git_patterns} | xargs wc -lc 2>/dev/null")
+        if wc_output:
+            total_line = wc_output.strip().split('\n')[-1]
+            parts = total_line.split()
+            if len(parts) >= 2:
+                num_lines = int(parts[0])
+                num_chars = int(parts[1])
+    num_tokens = num_chars // 4  # assume approximately 4 chars per token
 
     # count dependencies via uv.lock
     uv_lock_lines = 0
@@ -197,8 +211,6 @@ EXPECTED_FILES = [
     "base-model-training.md",
     "base-model-loss.md",
     "base-model-evaluation.md",
-    "midtraining.md",
-    "chat-evaluation-mid.md",
     "chat-sft.md",
     "chat-evaluation-sft.md",
     "chat-rl.md",
@@ -302,8 +314,6 @@ class Report:
                 # extract the most important metrics from the sections
                 if file_name == "base-model-evaluation.md":
                     final_metrics["base"] = extract(section, "CORE")
-                if file_name == "chat-evaluation-mid.md":
-                    final_metrics["mid"] = extract(section, chat_metrics)
                 if file_name == "chat-evaluation-sft.md":
                     final_metrics["sft"] = extract(section, chat_metrics)
                 if file_name == "chat-evaluation-rl.md":
@@ -323,7 +333,7 @@ class Report:
             # Custom ordering: CORE first, ChatCORE last, rest in middle
             all_metrics = sorted(all_metrics, key=lambda x: (x != "CORE", x == "ChatCORE", x))
             # Fixed column widths
-            stages = ["base", "mid", "sft", "rl"]
+            stages = ["base", "sft", "rl"]
             metric_width = 15
             value_width = 8
             # Write table header
