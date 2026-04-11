@@ -1,158 +1,77 @@
 """
-BPE Tokenizer in the style of GPT-4.
+Amino acid tokenizer
 
-Two implementations are available:
-1) HuggingFace Tokenizer that can do both training and inference but is really confusing
-2) Our own RustBPE Tokenizer for training and tiktoken for efficient inference
+Will also try using rustbpe tokenizer to see if bpe picks up on amino-acid motifs.
 """
 
 import os
 import copy
 from functools import lru_cache
 
+AMINO_ACIDS = "ACDEFGHIKLMNPQRSTVWY"
+
 SPECIAL_TOKENS = [
-    # every document begins with the Beginning of Sequence (BOS) token that delimits documents
-    "<|bos|>",
-    # tokens below are only used during finetuning to render Conversations into token ids
-    "<|user_start|>", # user messages
-    "<|user_end|>",
-    "<|assistant_start|>", # assistant messages
-    "<|assistant_end|>",
-    "<|python_start|>", # assistant invokes python REPL tool
-    "<|python_end|>",
-    "<|output_start|>", # python REPL outputs back to assistant
-    "<|output_end|>",
+    "<pad>",
+    "<mask>",
+    "<unk>",
+    "<bos>",
+    "<eos>",
+    "<cls>",
+    "<sep>"
 ]
 
-# NOTE: this split pattern deviates from GPT-4 in that we use \p{N}{1,2} instead of \p{N}{1,3}
-# I did this because I didn't want to "waste" too many tokens on numbers for smaller vocab sizes.
-# I verified that 2 is the sweet spot for vocab size of 32K. 1 is a bit worse, 3 was worse still.
-SPLIT_PATTERN = r"""'(?i:[sdmt]|ll|ve|re)|[^\r\n\p{L}\p{N}]?+\p{L}+|\p{N}{1,2}| ?[^\s\p{L}\p{N}]++[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+"""
-
-# -----------------------------------------------------------------------------
-# Generic GPT-4-style tokenizer based on HuggingFace Tokenizer
-from tokenizers import Tokenizer as HFTokenizer
-from tokenizers import pre_tokenizers, decoders, Regex
-from tokenizers.models import BPE
-from tokenizers.trainers import BpeTrainer
-
-class HuggingFaceTokenizer:
-    """Light wrapper around HuggingFace Tokenizer for some utilities"""
-
-    def __init__(self, tokenizer):
-        self.tokenizer = tokenizer
-
-    @classmethod
-    def from_pretrained(cls, hf_path):
-        # init from a HuggingFace pretrained tokenizer (e.g. "gpt2")
-        tokenizer = HFTokenizer.from_pretrained(hf_path)
-        return cls(tokenizer)
-
-    @classmethod
-    def from_directory(cls, tokenizer_dir):
-        # init from a local directory on disk (e.g. "out/tokenizer")
-        tokenizer_path = os.path.join(tokenizer_dir, "tokenizer.json")
-        tokenizer = HFTokenizer.from_file(tokenizer_path)
-        return cls(tokenizer)
-
-    @classmethod
-    def train_from_iterator(cls, text_iterator, vocab_size):
-        # train from an iterator of text
-        # Configure the HuggingFace Tokenizer
-        tokenizer = HFTokenizer(BPE(
-            byte_fallback=True, # needed!
-            unk_token=None,
-            fuse_unk=False,
-        ))
-        # Normalizer: None
-        tokenizer.normalizer = None
-        # Pre-tokenizer: GPT-4 style
-        # the regex pattern used by GPT-4 to split text into groups before BPE
-        # NOTE: The pattern was changed from \p{N}{1,3} to \p{N}{1,2} because I suspect it is harmful to
-        # very small models and smaller vocab sizes, because it is a little bit wasteful in the token space.
-        # (but I haven't validated this! TODO)
-        gpt4_split_regex = Regex(SPLIT_PATTERN) # huggingface demands that you wrap it in Regex!!
-        tokenizer.pre_tokenizer = pre_tokenizers.Sequence([
-            pre_tokenizers.Split(pattern=gpt4_split_regex, behavior="isolated", invert=False),
-            pre_tokenizers.ByteLevel(add_prefix_space=False, use_regex=False)
-        ])
-        # Decoder: ByteLevel (it pairs together with the ByteLevel pre-tokenizer)
-        tokenizer.decoder = decoders.ByteLevel()
-        # Post-processor: None
-        tokenizer.post_processor = None
-        # Trainer: BPE
-        trainer = BpeTrainer(
-            vocab_size=vocab_size,
-            show_progress=True,
-            min_frequency=0, # no minimum frequency
-            initial_alphabet=pre_tokenizers.ByteLevel.alphabet(),
-            special_tokens=SPECIAL_TOKENS,
-        )
-        # Kick off the training
-        tokenizer.train_from_iterator(text_iterator, trainer)
-        return cls(tokenizer)
+class ProteinTokenizer:
+    def __init__(self):
+        vocab = SPECIAL_TOKENS + list(AMINO_ACIDS)
+        # Pad vocab to 64 for distributed training compatibility
+        while len(vocab) < 64:
+            vocab.append(f"<pad_{len(vocab)}>")
+        
+        self.vocab_size = len(vocab)  # Now 64
+        self.aa_to_id = {aa:i for i,aa in enumerate(vocab)}
+        self.id_to_aa = {i:aa for i,aa in enumerate(vocab)}
 
     def get_vocab_size(self):
-        return self.tokenizer.get_vocab_size()
+        return self.vocab_size
 
     def get_special_tokens(self):
-        special_tokens_map = self.tokenizer.get_added_tokens_decoder()
-        special_tokens = [w.content for w in special_tokens_map.values()]
-        return special_tokens
-
-    def id_to_token(self, id):
-        return self.tokenizer.id_to_token(id)
-
-    def _encode_one(self, text, prepend=None, append=None, num_threads=None):
-        # encode a single string
-        # prepend/append can be either a string of a special token or a token id directly.
-        # num_threads is ignored (only used by the nanochat Tokenizer for parallel encoding)
-        assert isinstance(text, str)
-        ids = []
+        return SPECIAL_TOKENS
+    
+    def encode(self, sequence, prepend=None, append=None, num_threads=8):
+        """Encode a protein sequence to token IDs, optionally with special tokens."""
+        ids = [self.aa_to_id.get(aa, 2) for aa in sequence]  # 2 is <unk>
+        
         if prepend is not None:
             prepend_id = prepend if isinstance(prepend, int) else self.encode_special(prepend)
-            ids.append(prepend_id)
-        ids.extend(self.tokenizer.encode(text, add_special_tokens=False).ids)
+            ids.insert(0, prepend_id)
         if append is not None:
             append_id = append if isinstance(append, int) else self.encode_special(append)
             ids.append(append_id)
+        
         return ids
-
-    def encode_special(self, text):
-        # encode a single special token via exact match
-        return self.tokenizer.token_to_id(text)
-
+    
+    def __call__(self, text, prepend=None, append=None):
+        """Allow tokenizer to be called like a function."""
+        return self.encode(text, prepend=prepend, append=append)
+    
+    def encode_special(self, token):
+        """Encode a special token string to its ID."""
+        if token in self.aa_to_id:
+            return self.aa_to_id[token]
+        raise ValueError(f"Unknown special token: {token}")
+    
     def get_bos_token_id(self):
-        # Different HuggingFace models use different BOS tokens and there is little consistency
-        # 1) attempt to find a <|bos|> token
-        bos = self.encode_special("<|bos|>")
-        # 2) if that fails, attempt to find a <|endoftext|> token (e.g. GPT-2 models)
-        if bos is None:
-            bos = self.encode_special("<|endoftext|>")
-        # 3) if these fail, it's better to crash than to silently return None
-        assert bos is not None, "Failed to find BOS token in tokenizer"
-        return bos
-
-    def encode(self, text, *args, **kwargs):
-        if isinstance(text, str):
-            return self._encode_one(text, *args, **kwargs)
-        elif isinstance(text, list):
-            return [self._encode_one(t, *args, **kwargs) for t in text]
-        else:
-            raise ValueError(f"Invalid input type: {type(text)}")
-
-    def __call__(self, *args, **kwargs):
-        return self.encode(*args, **kwargs)
-
+        """Get the beginning-of-sequence token ID."""
+        return self.aa_to_id['<bos>']
+    
+    def get_eos_token_id(self):
+        """Get the end-of-sequence token ID."""
+        return self.aa_to_id['<eos>']
+    
     def decode(self, ids):
-        return self.tokenizer.decode(ids, skip_special_tokens=False)
-
-    def save(self, tokenizer_dir):
-        # save the tokenizer to disk
-        os.makedirs(tokenizer_dir, exist_ok=True)
-        tokenizer_path = os.path.join(tokenizer_dir, "tokenizer.json")
-        self.tokenizer.save(tokenizer_path)
-        print(f"Saved tokenizer to {tokenizer_path}")
+        """Decode token IDs back to protein sequence."""
+        return ''.join([self.id_to_aa.get(i, '') for i in ids if i > 0])  # Skip <pad>
+    
 
 # -----------------------------------------------------------------------------
 # Tokenizer based on rustbpe + tiktoken combo
@@ -392,7 +311,8 @@ def get_tokenizer():
     base_dir = get_base_dir()
     tokenizer_dir = os.path.join(base_dir, "tokenizer")
     # return HuggingFaceTokenizer.from_directory(tokenizer_dir)
-    return RustBPETokenizer.from_directory(tokenizer_dir)
+    # return RustBPETokenizer.from_directory(tokenizer_dir)
+    return ProteinTokenizer()
 
 def get_token_bytes(device="cpu"):
     import torch
