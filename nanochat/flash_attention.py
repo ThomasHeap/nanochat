@@ -102,6 +102,8 @@ def _sdpa_attention(q, k, v, window_size, enable_gqa, attn_mask=None):
     if window >= 0 and window < Tk:
         mask = mask & ((row_idx - col_idx) <= window)
 
+    if attn_mask is not None:
+        mask = mask & attn_mask
     return F.scaled_dot_product_attention(q, k, v, attn_mask=mask, enable_gqa=enable_gqa)
 
 # =============================================================================
