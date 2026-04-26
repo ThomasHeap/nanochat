@@ -79,7 +79,7 @@ class CausalSelfAttention(nn.Module):
         self.ve_gate_channels = 12
         self.ve_gate = Linear(self.ve_gate_channels, self.n_kv_head, bias=False) if has_ve(layer_idx, config.n_layer) else None
 
-    def forward(self, x, ve, cos_sin, window_size, kv_cache):
+    def forward(self, x, ve, cos_sin, window_size, attn_mask, kv_cache):
         B, T, C = x.size()
 
         # Project the input to get queries, keys, and values
@@ -105,7 +105,7 @@ class CausalSelfAttention(nn.Module):
         # window_size is (left, right) tuple: (N, 0) for causal, (-1, 0) for full context
         if kv_cache is None:
             # Training: causal attention with optional sliding window
-            y = flash_attn.flash_attn_func(q, k, v, causal=True, window_size=window_size)
+            y = flash_attn.flash_attn_func(q, k, v, causal=True, window_size=window_size, attn_mask=attn_mask)
         else:
             # Inference: use flash_attn_with_kvcache which handles cache management
             k_cache, v_cache = kv_cache.get_layer_cache(self.layer_idx)
@@ -145,14 +145,13 @@ class Block(nn.Module):
         self.attn = CausalSelfAttention(config, layer_idx)
         self.mlp = MLP(config)
 
-    def forward(self, x, ve, cos_sin, window_size, kv_cache):
-        x = x + self.attn(norm(x), ve, cos_sin, window_size, kv_cache)
+    def forward(self, x, ve, cos_sin, window_size, attn_mask, kv_cache):
+        x = x + self.attn(norm(x), ve, cos_sin, window_size, attn_mask, kv_cache)
         x = x + self.mlp(norm(x))
         return x
 
 
 class GPT(nn.Module):
-<<<<<<< HEAD
     def __init__(self, config, pad_vocab_size_to=64):
         """
         NOTE a major footgun: this __init__ function runs in meta device context (!!)
@@ -169,21 +168,10 @@ class GPT(nn.Module):
         padded_vocab_size = ((config.vocab_size + pad_vocab_size_to - 1) // pad_vocab_size_to) * pad_vocab_size_to
         if padded_vocab_size != config.vocab_size:
             print0(f"Padding vocab_size from {config.vocab_size} to {padded_vocab_size} for efficiency")
-=======
-    def __init__(self, config, pad_vocab_size_to=32):
-        super().__init__()
-        self.config = config
-        # For DDP, we want vocab_size divisible by world_size. Also, there are potential performance benefits, see:
-        # https://huggingface.co/docs/transformers/main_classes/model#transformers.PreTrainedModel.resize_token_embeddings
-        padded_vocab_size = ((config.vocab_size + pad_vocab_size_to - 1) // pad_vocab_size_to) * pad_vocab_size_to
-        if padded_vocab_size != config.vocab_size:
-            print0(f"Padding vocab_size from {config.vocab_size} to {padded_vocab_size} to be divisible by {pad_vocab_size_to}")
->>>>>>> origin/protein_lm
         self.transformer = nn.ModuleDict({
             "wte": nn.Embedding(padded_vocab_size, config.n_embd),
             "h": nn.ModuleList([Block(config, layer_idx) for layer_idx in range(config.n_layer)]),
         })
-<<<<<<< HEAD
         self.lm_head = Linear(config.n_embd, padded_vocab_size, bias=False)
         # Per-layer learnable scalars (inspired by modded-nanogpt)
         # resid_lambdas: scales the residual stream at each layer (init 1.0 = neutral)
@@ -201,10 +189,6 @@ class GPT(nn.Module):
         kv_dim = config.n_kv_head * head_dim
         self.value_embeds = nn.ModuleDict({str(i): nn.Embedding(padded_vocab_size, kv_dim) for i in range(config.n_layer) if has_ve(i, config.n_layer)})
         # To support meta device initialization, we init the rotary embeddings here, but it's just "fake" meta tensors only.
-=======
-        self.lm_head = nn.Linear(config.n_embd, padded_vocab_size, bias=False)
-        # To support meta device initialization, we init the rotary embeddings here, but it's fake
->>>>>>> origin/protein_lm
         # As for rotary_seq_len, these rotary embeddings are pretty small/cheap in memory,
         # so let's just over-compute them by 10X, but assert fail if we ever reach that amount.
         # In the future we can dynamically grow the cache, for now it's fine.
@@ -404,7 +388,6 @@ class GPT(nn.Module):
         # Scale the LR for the AdamW parameters by ∝1/√dmodel (tuned for 768 dim model)
         dmodel_lr_scale = (model_dim / 768) ** -0.5
         print0(f"Scaling the LR for the AdamW parameters ∝1/√({model_dim}/768) = {dmodel_lr_scale:.6f}")
-<<<<<<< HEAD
 
         # Build param_groups with all required fields explicit
         param_groups = [
@@ -415,11 +398,6 @@ class GPT(nn.Module):
             dict(kind='adamw', params=resid_params, lr=scalar_lr * 0.01, betas=(0.8, 0.95), eps=1e-10, weight_decay=0.05),
             dict(kind='adamw', params=x0_params, lr=scalar_lr, betas=(0.96, 0.95), eps=1e-10, weight_decay=0.0),  # higher beta1 for x0
             dict(kind='adamw', params=smear_params, lr=0.2, betas=(0.8, 0.95), eps=1e-10, weight_decay=0.0),
-=======
-        adam_groups = [
-            dict(params=lm_head_params, lr=unembedding_lr * dmodel_lr_scale),
-            dict(params=embedding_params, lr=embedding_lr * dmodel_lr_scale),
->>>>>>> origin/protein_lm
         ]
         # Muon groups (matrix params, grouped by shape for stacking)
         for shape in sorted({p.shape for p in matrix_params}):
@@ -435,16 +413,28 @@ class GPT(nn.Module):
             group["initial_lr"] = group["lr"]
         return optimizer
 
-    def forward(self, idx, targets=None, kv_cache=None, loss_reduction='mean'):
+    def forward(self, idx, position_ids=None, targets=None, kv_cache=None, loss_reduction='mean'):
         B, T = idx.size()
-
+        user_provided_position_ids = position_ids is not None
         # Grab the rotary embeddings for the current sequence length (they are of shape (1, seq_len, 1, head_dim/2))
         assert T <= self.cos.size(1), f"Sequence length grew beyond the rotary embeddings cache: {T} > {self.cos.size(1)}"
         assert idx.device == self.cos.device, f"Rotary embeddings and idx are on different devices: {idx.device} != {self.cos.device}"
         assert self.cos.dtype == COMPUTE_DTYPE, f"Rotary embeddings must be in {COMPUTE_DTYPE}, got {self.cos.dtype}"
         # if kv cache exists, we need to offset the rotary embeddings to the current position in the cache
-        T0 = 0 if kv_cache is None else kv_cache.get_pos()
-        cos_sin = self.cos[:, T0:T0+T], self.sin[:, T0:T0+T] # truncate cache to current sequence length
+        if position_ids is None:
+            T0 = 0 if kv_cache is None else kv_cache.get_pos()
+            position_ids = torch.arange(T0, T0 + T, device=idx.device).unsqueeze(0)
+        cos_sin = self.cos[0][position_ids], self.sin[0][position_ids]
+
+        attn_mask = None
+        if kv_cache is None and user_provided_position_ids:
+            doc_ids = torch.cumsum(position_ids == 0, dim=1)
+            same_doc = doc_ids.unsqueeze(2) == doc_ids.unsqueeze(1)
+            causal_mask = torch.ones(T, T, dtype=torch.bool, device=idx.device).tril()
+            mask = same_doc & causal_mask
+            # attn_mask = torch.zeros(B, 1, T, T, device=idx.device)
+            # attn_mask = attn_mask.masked_fill(~mask.unsqueeze(1), float('-inf'))
+            attn_mask = mask.unsqueeze(1)
 
         # Embed the tokens
         x = self.transformer.wte(idx) # embed current token
@@ -478,7 +468,7 @@ class GPT(nn.Module):
         for i, block in enumerate(self.transformer.h):
             x = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
             ve = self.value_embeds[str(i)](idx).to(x.dtype) if str(i) in self.value_embeds else None
-            x = block(x, ve, cos_sin, self.window_sizes[i], kv_cache)
+            x = block(x, ve, cos_sin, self.window_sizes[i], attn_mask, kv_cache)
             if i == backout_layer:
                 x_backout = x
         # Subtract mid-layer residual to remove low-level features before logit projection
@@ -489,12 +479,7 @@ class GPT(nn.Module):
         # Forward the lm_head (compute logits)
         softcap = 15 # smoothly cap the logits to the range [-softcap, softcap]
         logits = self.lm_head(x) # (B, T, padded_vocab_size) <- very big tensor, large amount of memory
-<<<<<<< HEAD
         logits = logits[..., :self.config.vocab_size] # slice to remove padding
-=======
-        # slice to remove padding
-        logits = logits[..., :self.config.vocab_size]
->>>>>>> origin/protein_lm
         logits = logits.float() # switch to fp32 for logit softcap and loss computation
         logits = softcap * torch.tanh(logits / softcap) # squash the logits
 

@@ -246,7 +246,7 @@ def ur100p_sequences_packed_iter(split="train", start=0, step=1, max_length=1024
             current_length = 0
         
         # Add sequence to current document
-        current_doc.append(sequence)
+        current_doc.append(seq_tokens)
         current_length += seq_length
         
         # If current doc is getting large, yield it

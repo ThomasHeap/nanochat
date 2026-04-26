@@ -84,51 +84,55 @@ def ur100p_dataloader_with_state(B, T, split, max_seq_length=1024, device="cuda"
     # Token buffer for accumulating tokens
     needed_tokens = B * T + 1  # +1 for target at last position
     token_buffer = deque()
-    
+    position_buffer = deque()
+
     while True:
         # Accumulate enough tokens for one iteration
         while len(token_buffer) < needed_tokens:
             doc, current_doc_idx, epoch_complete = next(documents)
-            
+
             # Handle epoch completion marker
             if epoch_complete:
                 print(f"[UR100P Dataloader] Epoch {current_epoch-1} completed for rank {ddp_rank}")
                 continue
-            
+
             # Pack sequences in document with <bos>/<eos>
-            for sequence in doc:
+            for seq_tokens in doc:
                 # Add <bos> + sequence + <eos>
-                tokens = [bos_token_id] + tokenizer.encode(sequence) + [eos_token_id]
+                tokens = [bos_token_id] + seq_tokens + [eos_token_id]
+                position_buffer.extend(range(len(tokens)))
                 token_buffer.extend(tokens)
                 tokens_in_current_epoch += len(tokens)
-        
+
         # Extract tokens for this batch
         tokens = [token_buffer.popleft() for _ in range(needed_tokens)]
-        
+
         # Create tensor with memory pinning for CUDA
         use_cuda_optimizations = device == "cuda"
         scratch = torch.tensor(tokens, dtype=torch.long, pin_memory=use_cuda_optimizations)
-        
+        position_ids_cpu = torch.tensor([position_buffer.popleft() for _ in range(needed_tokens)], dtype=torch.long, pin_memory=use_cuda_optimizations)[:-1]
+
         # Create inputs/targets
         inputs_cpu = scratch[:-1]
         targets_cpu = scratch[1:]
-        
+
         # Reshape and move to device
         inputs = inputs_cpu.view(B, T).to(device=device, non_blocking=use_cuda_optimizations)
         targets = targets_cpu.view(B, T).to(device=device, non_blocking=use_cuda_optimizations)
-        
+        position_ids = position_ids_cpu.view(B, T).to(device=device, non_blocking=use_cuda_optimizations)
+
         state_dict = {
             "doc_idx": current_doc_idx,
             "epoch": current_epoch,
             "tokens_in_epoch": tokens_in_current_epoch
         }
-        yield inputs, targets, state_dict
+        yield inputs, targets, position_ids, state_dict
 
 
 def ur100p_dataloader(*args, **kwargs):
     """Helper function that only emits inputs/targets without state_dict"""
-    for inputs, targets, state_dict in ur100p_dataloader_with_state(*args, **kwargs):
-        yield inputs, targets
+    for inputs, targets, position_ids, state_dict in ur100p_dataloader_with_state(*args, **kwargs):
+        yield inputs, targets, position_ids
 
 
 def test_ur100p_dataloader():
@@ -142,9 +146,10 @@ def test_ur100p_dataloader():
     
     print("Getting first batch...")
     try:
-        inputs, targets, state_dict = next(dataloader)
+        inputs, targets, position_ids, state_dict = next(dataloader)
         print(f"Inputs shape: {inputs.shape}")
         print(f"Targets shape: {targets.shape}")
+        print(f"Position IDs shape: {position_ids.shape}")
         print(f"State dict keys: {list(state_dict.keys())}")
         print(f"Sample tokens: {inputs[0, :20].tolist()}")
         
