@@ -29,7 +29,7 @@ import wandb
 import torch
 
 from nanochat.gpt import GPT, GPTConfig
-from nanochat.ur100p_dataloader import ur100p_dataloader_with_state, ur100p_dataloader
+from nanochat.protein_dataloader import protein_dataloader_with_state, protein_dataloader
 from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, print_banner, get_base_dir, autodetect_device_type, get_peak_flops, COMPUTE_DTYPE, COMPUTE_DTYPE_REASON
 from nanochat.tokenizer import ProteinTokenizer
 from nanochat.checkpoint_manager import save_checkpoint, load_checkpoint
@@ -71,8 +71,8 @@ parser.add_argument("--eval-tokens", type=int, default=80*524288, help="number o
 parser.add_argument("--sample-every", type=int, default=2000, help="sample from model every N steps (-1 = disable)")
 parser.add_argument("--save-every", type=int, default=-1, help="save checkpoints every N steps (-1 = only at end)")
 # Dataset
-parser.add_argument("--shuffle-dataset", action="store_true", default=True, help="shuffle the dataset")
-parser.add_argument("--dataset-seed", type=int, default=42, help="random seed for dataset shuffling")
+parser.add_argument("--dataset-split-train", type=str, default="train", help="HF split name for training data")
+parser.add_argument("--dataset-seed", type=int, default=42, help="random seed for file shuffling")
 # Output
 parser.add_argument("--model-tag", type=str, default=None, help="override model tag for checkpoint directory name")
 args = parser.parse_args()
@@ -215,25 +215,22 @@ if resuming:
 # -----------------------------------------------------------------------------
 # Initialize the DataLoaders
 
-print0("Initializing UR100P protein dataloaders...")
-print0(f"Dataset shuffling: {'enabled' if args.shuffle_dataset else 'disabled'} (seed: {args.dataset_seed})")
+print0("Initializing protein dataloaders...")
 
 dataloader_resume_state_dict = None if not resuming else meta_data["dataloader_state_dict"]
-train_loader = ur100p_dataloader_with_state(
+train_loader = protein_dataloader_with_state(
     args.device_batch_size, args.max_seq_len,
-    split="train",
+    split=args.dataset_split_train,
     max_seq_length=args.max_seq_len,
     device=device,
     resume_state_dict=dataloader_resume_state_dict,
-    shuffle=args.shuffle_dataset,
     seed=args.dataset_seed,
 )
-build_val_loader = lambda: ur100p_dataloader(
+build_val_loader = lambda: protein_dataloader(
     args.device_batch_size, args.max_seq_len,
-    split="validation",
+    split="valid",
     max_seq_length=args.max_seq_len,
     device=device,
-    shuffle=args.shuffle_dataset,
     seed=args.dataset_seed,
 )
 x, y, position_ids, dataloader_state_dict = next(train_loader)
@@ -298,6 +295,7 @@ print0(f"Total batch size {total_batch_size:,} => gradient accumulation steps: {
 if not resuming:
     step = 0
     val_loss = None
+    val_bpaa = None
     min_val_loss = float("inf")
     smooth_train_loss = 0
     total_training_time = 0
@@ -305,6 +303,7 @@ else:
     step = meta_data["step"]
     loop_state = meta_data["loop_state"]
     val_loss = meta_data.get("val_loss")
+    val_bpaa = meta_data.get("val_bpaa")
     min_val_loss = loop_state["min_val_loss"]
     smooth_train_loss = loop_state["smooth_train_loss"]
     total_training_time = loop_state["total_training_time"]
@@ -324,6 +323,7 @@ while True:
                 x_val, y_val, position_ids_val = next(val_loader)
                 val_loss += model(x_val, position_ids_val, y_val).item()
         val_loss /= eval_steps
+        val_bpaa = val_loss / math.log(2)
         print0(f"Step {step:05d} | Validation loss: {val_loss:.6f}")
         if val_loss < min_val_loss:
             min_val_loss = val_loss
@@ -332,6 +332,7 @@ while True:
             "total_training_flops": flops_so_far,
             "total_training_time": total_training_time,
             "val/loss": val_loss,
+            "val_bpaa": val_bpaa
         })
         model.train()
 
@@ -367,6 +368,7 @@ while True:
             {
                 "step": step,
                 "val_loss": val_loss,
+                "val_bpaa": val_bpaa
                 "model_config": model_config_kwargs,
                 "user_config": user_config,
                 "device_batch_size": args.device_batch_size,
@@ -428,7 +430,7 @@ while True:
         eta_str = f" | eta: {eta_seconds/60:.1f}m"
     else:
         eta_str = ""
-    epoch = f"{dataloader_state_dict['epoch']} doc: {dataloader_state_dict['doc_idx']}"
+    epoch = f"{dataloader_state_dict['epoch']} file: {dataloader_state_dict['file_idx']}"
     print0(f"step {step:05d}/{num_iterations:05d} ({pct_done:.2f}%) | loss: {debiased_smooth_loss:.6f} | lrm: {lrm:.2f} | dt: {dt * 1000:.2f}ms | tok/sec: {tok_per_sec:,} | bf16_mfu: {mfu:.2f} | epoch: {epoch} | total time: {total_training_time/60:.2f}m{eta_str}")
     if step % 100 == 0:
         wandb_run.log({
